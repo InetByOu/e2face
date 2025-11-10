@@ -1,37 +1,37 @@
-# ðŸ›¡ï¸ E2FACE â€” Easy 2-Face Dual WAN Load Balancer
+# 🛡️ E2FACE — Easy 2-Face Dual WAN Load Balancer
 
 ![Version](https://img.shields.io/badge/Version-1.3.0-blue)
 ![OpenWRT](https://img.shields.io/badge/OpenWRT-18.06%2B-green)
 ![License](https://img.shields.io/badge/License-MIT-orange)
 ![Status](https://img.shields.io/badge/Status-Stable-success)
 
-> **E2FACE** adalah skrip universal untuk konfigurasi **Dual WAN Load Balancing** di **OpenWRT** dengan tampilan interaktif, aman, dan ramah pengguna â€” tanpa mengganggu konfigurasi jaringan yang sudah ada.
+> **E2FACE** adalah skrip universal untuk konfigurasi **Dual WAN Load Balancing** di **OpenWRT** dengan tampilan interaktif, aman, dan ramah pengguna — tanpa mengganggu konfigurasi jaringan yang sudah ada.
 
 ---
 
-## âœ¨ Fitur Utama
+## ✨ Fitur Utama
 
-### ðŸ›¡ï¸ Safety First
-- **Anti Double Configuration** â€” Deteksi dan cegah konfigurasi duplikat.  
-- **Safe Interface Detection** â€” Tidak memodifikasi interface non-E2FACE.  
-- **Selective Modification** â€” Hanya ubah bagian khusus E2FACE.  
-- **Auto Backup & Rollback** â€” Backup otomatis dan rollback cepat.  
+### 🛡️ Safety First
+- **Anti Double Configuration** — Deteksi dan cegah konfigurasi duplikat.  
+- **Safe Interface Detection** — Tidak memodifikasi interface non-E2FACE.  
+- **Selective Modification** — Hanya ubah bagian khusus E2FACE.  
+- **Auto Backup & Rollback** — Backup otomatis dan rollback cepat.  
 
-### âš¡ Smart Automation
-- **Auto Interface Detection** â€” Deteksi otomatis interface aktif.  
-- **Smart Load Balancing** â€” Rasio 1:1 dengan failover otomatis.  
-- **Health Monitoring** â€” Pemantauan koneksi real-time.  
-- **Auto Update** â€” Pembaruan langsung dari GitHub.  
+### ⚡ Smart Automation
+- **Auto Interface Detection** — Deteksi otomatis interface aktif.  
+- **Smart Load Balancing** — Rasio 1:1 dengan failover otomatis.  
+- **Health Monitoring** — Pemantauan koneksi real-time.  
+- **Auto Update** — Pembaruan langsung dari GitHub.  
 
-### ðŸŽ¨ User Experience
-- **Interactive Terminal Menu** â€” Navigasi mudah dan intuitif.  
-- **Visual Progress & Spinner** â€” Animasi status yang menarik.  
-- **Bash Completion Support** â€” Auto-complete untuk semua command.  
-- **Universal Access** â€” Dapat dijalankan dari mana pun di sistem.  
+### 🎨 User Experience
+- **Interactive Terminal Menu** — Navigasi mudah dan intuitif.  
+- **Visual Progress & Spinner** — Animasi status yang menarik.  
+- **Bash Completion Support** — Auto-complete untuk semua command.  
+- **Universal Access** — Dapat dijalankan dari mana pun di sistem.  
 
 ---
 
-## ðŸš€ Instalasi Cepat (30 Detik)
+## 🚀 Instalasi Cepat (30 Detik)
 
 ```bash
 wget -q https://raw.githubusercontent.com/InetByOu/e2face/main/setup.sh
@@ -41,26 +41,26 @@ chmod +x setup.sh
 
 ---
 
-## ðŸ§  Penggunaan Dasar
+## 🧠 Penggunaan Dasar
 
-### ðŸ”¹ Auto Setup (disarankan)
+### 🔹 Auto Setup (disarankan)
 ```bash
 e2face --auto
 ```
 
-### ðŸ”¹ Manual Setup
+### 🔹 Manual Setup
 ```bash
 e2face --manual
 ```
 
-### ðŸ”¹ Mode Interaktif
+### 🔹 Mode Interaktif
 ```bash
 e2face
 ```
 
 ---
 
-## ðŸ§© Persyaratan Sistem
+## 🧩 Persyaratan Sistem
 
 | Komponen | Minimum | Rekomendasi |
 |-----------|----------|-------------|
@@ -71,16 +71,16 @@ e2face
 
 ---
 
-## ðŸ› ï¸ Metode Instalasi Lain
+## 🛠️ Metode Instalasi Lain
 
-### 1ï¸âƒ£ Auto Installer (Direkomendasikan)
+### 1️⃣ Auto Installer (Direkomendasikan)
 ```bash
 wget https://raw.githubusercontent.com/InetByOu/e2face/main/setup.sh
 chmod +x setup.sh
 ./setup.sh
 ```
 
-### 2ï¸âƒ£ Git Clone Manual
+### 2️⃣ Git Clone Manual
 ```bash
 git clone https://github.com/InetByOu/e2face.git
 cd e2face
@@ -88,7 +88,7 @@ chmod +x setup.sh
 ./setup.sh
 ```
 
-### 3ï¸âƒ£ Direct Download
+### 3️⃣ Direct Download
 ```bash
 wget -O /usr/bin/e2face https://raw.githubusercontent.com/InetByOu/e2face/main/e2face
 chmod +x /usr/bin/e2face
@@ -97,7 +97,7 @@ ln -s /usr/bin/e2face /usr/local/bin/e2face
 
 ---
 
-## ðŸŽ® Menu Utama
+## 🎮 Menu Utama
 
 | No | Menu | Fungsi |
 |----|------|---------|
@@ -111,7 +111,7 @@ ln -s /usr/bin/e2face /usr/local/bin/e2face
 
 ---
 
-## âš™ï¸ Opsi Command Line
+## ⚙️ Opsi Command Line
 
 ```bash
 e2face --auto          # Setup otomatis
@@ -126,9 +126,9 @@ e2face --help          # Bantuan
 
 ---
 
-## ðŸ§° Detail Konfigurasi
+## 🧰 Detail Konfigurasi
 
-### ðŸ”¸ Network Configuration
+### 🔸 Network Configuration
 ```bash
 config interface 'wan1'
     option proto 'dhcp'
@@ -141,7 +141,7 @@ config interface 'wan2'
     option metric '20'
 ```
 
-### ðŸ”¸ Firewall Configuration
+### 🔸 Firewall Configuration
 ```bash
 config zone
     option name 'wan'
@@ -154,7 +154,7 @@ config zone
     option mtu_fix '1'
 ```
 
-### ðŸ”¸ Load Balancing (MWAN3)
+### 🔸 Load Balancing (MWAN3)
 - **Rasio**: 1:1 balanced  
 - **Health Check**: `8.8.8.8` dan `1.1.1.1`  
 - **Failover**: Otomatis jika salah satu down  
@@ -162,47 +162,47 @@ config zone
 
 ---
 
-## ðŸ“Š Monitoring & Maintenance
+## 📊 Monitoring & Maintenance
 
-### ðŸ”¹ Status
+### 🔹 Status
 ```bash
 e2face --status
 mwan3 status
 ```
 
-### ðŸ”¹ Log
+### 🔹 Log
 ```bash
 logread | grep mwan3
 ```
 
-### ðŸ”¹ Test Interface
+### 🔹 Test Interface
 ```bash
 ping -I eth0.2 8.8.8.8
 ping -I eth0.3 8.8.8.8
 ```
 
-### ðŸ”¹ Update
+### 🔹 Update
 ```bash
 e2face --update
 ```
 
 ---
 
-## ðŸ§© Sistem Keamanan
+## 🧩 Sistem Keamanan
 
-### âœ… Dilakukan
+### ✅ Dilakukan
 - Backup otomatis sebelum modifikasi  
 - Modifikasi hanya pada `wan1` dan `wan2`  
 - Rollback cepat via `/root/rollback_dualwan.sh`
 
-### âŒ Tidak Dilakukan
+### ❌ Tidak Dilakukan
 - Tidak menghapus interface existing  
 - Tidak mengubah konfigurasi `wan`/`lan` asli  
 - Tidak menghapus zone firewall lama  
 
 ---
 
-## ðŸ§¯ Troubleshooting
+## 🧯 Troubleshooting
 
 | Masalah | Pesan | Solusi |
 |----------|--------|--------|
@@ -211,7 +211,7 @@ e2face --update
 | Interface Already Used | `Interface eth0.2 is already used` | Jalankan `e2face --manual` |
 | No Internet Connection | `No connectivity via eth0.2` | Cek DHCP & ping manual |
 
-### ðŸ” Debug Commands
+### 🔍 Debug Commands
 ```bash
 mwan3 status
 ip route show table all
@@ -222,18 +222,18 @@ curl --interface wan2 http://ifconfig.me
 
 ---
 
-## ðŸ”„ Riwayat Versi
+## 🔄 Riwayat Versi
 
 | Versi | Fitur Utama |
 |--------|--------------|
-| **v1.3.0** | ðŸ›¡ï¸ Anti Double Config Â· ðŸ” Smart Conflict Detect Â· ðŸ’¾ Selective Backup |
-| **v1.2.0** | ðŸ”„ Auto Update Â· âŒ¨ï¸ Bash Completion Â· ðŸ§¹ Cleanup |
-| **v1.1.0** | ðŸŽ¨ Interactive Menu Â· âš¡ Visual Progress Â· ðŸ“Š Enhanced Testing |
-| **v1.0.0** | âœ… Basic Dual WAN Â· ðŸ”§ Auto Detect Â· ðŸ“ Backup System |
+| **v1.3.0** | 🛡️ Anti Double Config · 🔍 Smart Conflict Detect · 💾 Selective Backup |
+| **v1.2.0** | 🔄 Auto Update · ⌨️ Bash Completion · 🧹 Cleanup |
+| **v1.1.0** | 🎨 Interactive Menu · ⚡ Visual Progress · 📊 Enhanced Testing |
+| **v1.0.0** | ✅ Basic Dual WAN · 🔧 Auto Detect · 📝 Backup System |
 
 ---
 
-## ðŸ¤ Kontribusi
+## 🤝 Kontribusi
 
 1. Fork repository  
 2. Buat branch fitur:  
@@ -248,25 +248,25 @@ curl --interface wan2 http://ifconfig.me
 
 ---
 
-## ðŸ“ Lisensi
+## 📝 Lisensi
 
 Distribusi di bawah lisensi **MIT License**.  
 Lihat file [`LICENSE`](LICENSE) untuk informasi lengkap.
 
 ---
 
-## ðŸ‘¥ Pengembang
+## 👥 Pengembang
 
-- **Ou** â€” *Founder & Developer* (InetByOu)  
+- **Ou** — *Founder & Developer* (InetByOu)  
 
-### ðŸ™ Ucapan Terima Kasih
+### 🙏 Ucapan Terima Kasih
 - Komunitas **OpenWRT**  
 - Tim **MWAN3 Developers**  
 - Semua **tester dan kontributor**
 
 ---
 
-## ðŸ“ž Dukungan
+## 📞 Dukungan
 
 1. Cek bagian *Troubleshooting* di atas  
 2. Buka *GitHub Issues* untuk melaporkan bug  
@@ -279,7 +279,7 @@ Lihat file [`LICENSE`](LICENSE) untuk informasi lengkap.
 
 <div align="center">
 
-### ðŸ›¡ï¸ E2FACE â€” Making Dual WAN Load Balancing Safe & Easy ðŸš€  
-> â€œDua Internet, Satu Router, Zero Headache.â€
+### 🛡️ E2FACE — Making Dual WAN Load Balancing Safe & Easy 🚀  
+> “Dua Internet, Satu Router, Zero Headache.”
 
 </div>
