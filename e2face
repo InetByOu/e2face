@@ -1,0 +1,1222 @@
+#!/bin/bash
+
+# e2face - Dual WAN Load Balancer for OpenWRT
+# Easy 2-Face Internet Load Balancing
+# GitHub: https://github.com/InetByOu/e2face.git
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+PURPLE='\033[0;35m'
+CYAN='\033[0;36m'
+NC='\033[0m' # No Color
+
+# Configuration
+VERSION="1.3.0"
+GITHUB_REPO="https://github.com/InetByOu/e2face.git"
+GITHUB_RAW="https://raw.githubusercontent.com/InetByOu/e2face/main"
+SCRIPT_NAME="e2face"
+INSTALL_PATH="/usr/bin/e2face"
+BACKUP_PATH="/root/backup_configs"
+CONFIG_LOCKFILE="/tmp/e2face.lock"
+
+# Paths
+MWAN3_CONFIG="/etc/config/mwan3"
+NETWORK_CONFIG="/etc/config/network"
+FIREWALL_CONFIG="/etc/config/firewall"
+
+# Global variables
+WAN1=""
+WAN2=""
+DETECTED_INTERFACES=()
+
+# Animation characters
+SPINNER=('|' '/' '-' '\')
+DOTS=('.  ' '.. ' '...' '   ')
+
+# Function to print with colors
+print_status() { echo -e "${GREEN}[INFO]${NC} $1"; }
+print_warning() { echo -e "${YELLOW}[WARNING]${NC} $1"; }
+print_error() { echo -e "${RED}[ERROR]${NC} $1"; }
+print_menu() { echo -e "${CYAN}[MENU]${NC} $1"; }
+print_header() { echo -e "${PURPLE}$1${NC}"; }
+print_step() { echo -e "${BLUE}[STEP]${NC} $1"; }
+
+# Safe configuration detection functions
+check_existing_e2face_config() {
+    print_step "Checking for existing E2FACE configuration..."
+    
+    local existing_configs=0
+    local conflicts=()
+    
+    # Check for E2FACE-specific wan1/wan2 in network config
+    if grep -q "config interface.*['\"]wan1['\"]" $NETWORK_CONFIG 2>/dev/null; then
+        conflicts+=("Network: wan1 interface")
+        existing_configs=$((existing_configs + 1))
+    fi
+    
+    if grep -q "config interface.*['\"]wan2['\"]" $NETWORK_CONFIG 2>/dev/null; then
+        conflicts+=("Network: wan2 interface")
+        existing_configs=$((existing_configs + 1))
+    fi
+    
+    # Check for wan1/wan2 in firewall wan zone
+    if grep -q "list network.*['\"]wan1['\"]" $FIREWALL_CONFIG 2>/dev/null || \
+       grep -q "list network.*['\"]wan2['\"]" $FIREWALL_CONFIG 2>/dev/null; then
+        conflicts+=("Firewall: wan1/wan2 in wan zone")
+        existing_configs=$((existing_configs + 1))
+    fi
+    
+    # Check mwan3 config (if file exists)
+    if [ -f $MWAN3_CONFIG ]; then
+        if grep -q "interface.*['\"]wan1['\"]" $MWAN3_CONFIG 2>/dev/null || \
+           grep -q "interface.*['\"]wan2['\"]" $MWAN3_CONFIG 2>/dev/null; then
+            conflicts+=("MWAN3: wan1/wan2 configuration")
+            existing_configs=$((existing_configs + 1))
+        fi
+    fi
+    
+    if [ $existing_configs -gt 0 ]; then
+        print_warning "Found existing E2FACE configuration!"
+        echo "Existing configuration detected:"
+        for conflict in "${conflicts[@]}"; do
+            echo "  - $conflict"
+        done
+        echo
+        
+        # Show current E2FACE configuration details
+        show_e2face_config_details
+        
+        echo
+        read -p "Do you want to remove existing E2FACE configuration and continue? (y/N): " -n 1 -r
+        echo
+        if [[ $REPLY =~ ^[Yy]$ ]]; then
+            remove_e2face_config_only
+            return 0
+        else
+            print_error "Setup cancelled due to existing E2FACE configuration"
+            return 1
+        fi
+    fi
+    
+    print_status "No existing E2FACE configuration found"
+    return 0
+}
+
+show_e2face_config_details() {
+    echo "Current E2FACE network configuration:"
+    local wan1_config=$(grep -A 3 "config interface.*['\"]wan1['\"]" $NETWORK_CONFIG 2>/dev/null)
+    local wan2_config=$(grep -A 3 "config interface.*['\"]wan2['\"]" $NETWORK_CONFIG 2>/dev/null)
+    
+    if [ -n "$wan1_config" ]; then
+        echo "wan1:"
+        echo "$wan1_config" | sed 's/^/  /'
+    else
+        echo "  wan1: Not configured"
+    fi
+    
+    if [ -n "$wan2_config" ]; then
+        echo "wan2:"
+        echo "$wan2_config" | sed 's/^/  /'
+    else
+        echo "  wan2: Not configured"
+    fi
+    echo
+    
+    # Show firewall configuration
+    echo "Firewall wan zone networks:"
+    grep "list network" $FIREWALL_CONFIG 2>/dev/null | sed 's/^/  /'
+    echo
+}
+
+remove_e2face_config_only() {
+    print_step "Removing existing E2FACE configuration only..."
+    
+    # Backup current config
+    local timestamp=$(date +%Y%m%d_%H%M%S)
+    mkdir -p $BACKUP_PATH
+    cp $NETWORK_CONFIG $BACKUP_PATH/network.before_cleanup.$timestamp
+    cp $FIREWALL_CONFIG $BACKUP_PATH/firewall.before_cleanup.$timestamp
+    [ -f $MWAN3_CONFIG ] && cp $MWAN3_CONFIG $BACKUP_PATH/mwan3.before_cleanup.$timestamp
+    
+    # Remove ONLY E2FACE wan1/wan2 from network config (safe removal)
+    sed -i '/config interface.*['\''"]wan1['\''"]/,/^$/d' $NETWORK_CONFIG 2>/dev/null
+    sed -i '/config interface.*['\''"]wan2['\''"]/,/^$/d' $NETWORK_CONFIG 2>/dev/null
+    
+    # Remove ONLY wan1/wan2 from firewall wan zone (safe removal)
+    if grep -q "list network.*['\''"]wan1['\''"]" $FIREWALL_CONFIG 2>/dev/null; then
+        # Use awk to safely remove only wan1/wan2 from wan zone
+        awk '
+        /config zone.*name.*wan/ { in_wan_zone=1 }
+        /^config/ && !/config zone.*name.*wan/ { in_wan_zone=0 }
+        in_wan_zone && /list network.*['\''"]wan1['\''"]/ { next }
+        in_wan_zone && /list network.*['\''"]wan2['\''"]/ { next }
+        { print }
+        ' $FIREWALL_CONFIG > $FIREWALL_CONFIG.tmp && mv $FIREWALL_CONFIG.tmp $FIREWALL_CONFIG
+    fi
+    
+    # Remove mwan3 config file (it's E2FACE specific)
+    if [ -f $MWAN3_CONFIG ]; then
+        rm -f $MWAN3_CONFIG
+    fi
+    
+    # Stop mwan3 service
+    /etc/init.d/mwan3 stop 2>/dev/null
+    /etc/init.d/mwan3 disable 2>/dev/null
+    
+    # Restart services to apply changes
+    /etc/init.d/network reload 2>/dev/null
+    /etc/init.d/firewall reload 2>/dev/null
+    
+    print_status "E2FACE configuration removed safely"
+    print_status "Backups saved to: $BACKUP_PATH"
+}
+
+check_interface_conflicts() {
+    local iface1=$1
+    local iface2=$2
+    
+    print_step "Checking for interface conflicts..."
+    
+    local conflicts=0
+    local conflict_details=()
+    
+    # Check if interfaces are already used in network config
+    check_interface_usage_in_config() {
+        local iface=$1
+        local usage=$(grep -B1 "option device.*$iface" $NETWORK_CONFIG 2>/dev/null | \
+                     grep "config interface" | awk -F"'" '{print $2}' | head -1)
+        if [ -n "$usage" ]; then
+            conflict_details+=("Interface $iface is already used as: $usage")
+            return 1
+        fi
+        return 0
+    }
+    
+    # Check interface 1
+    if ! check_interface_usage_in_config "$iface1"; then
+        conflicts=$((conflicts + 1))
+    fi
+    
+    # Check interface 2
+    if ! check_interface_usage_in_config "$iface2"; then
+        conflicts=$((conflicts + 1))
+    fi
+    
+    # Check if interfaces are the same
+    if [ "$iface1" = "$iface2" ]; then
+        conflict_details+=("WAN1 and WAN2 cannot be the same interface")
+        conflicts=$((conflicts + 1))
+    fi
+    
+    # Check if interfaces exist
+    if ! ip link show dev "$iface1" >/dev/null 2>&1; then
+        conflict_details+=("Interface $iface1 does not exist")
+        conflicts=$((conflicts + 1))
+    fi
+    
+    if ! ip link show dev "$iface2" >/dev/null 2>&1; then
+        conflict_details+=("Interface $iface2 does not exist")
+        conflicts=$((conflicts + 1))
+    fi
+    
+    # Show conflicts if any
+    if [ $conflicts -gt 0 ]; then
+        print_error "Interface conflicts detected:"
+        for detail in "${conflict_details[@]}"; do
+            echo "  - $detail"
+        done
+        echo
+        
+        # Show current interface usage
+        show_current_interface_usage
+        
+        return 1
+    fi
+    
+    print_status "No interface conflicts detected"
+    return 0
+}
+
+show_current_interface_usage() {
+    echo "Current interface usage in network config:"
+    echo "------------------------------------------"
+    
+    # Get all interfaces from network config
+    awk '
+    /config interface/ { 
+        if (interface) print "  " interface " -> " device
+        interface=$0 
+        gsub(/config interface[ \t]*['\''"]|[ \t]*$/, "", interface)
+        interface=substr(interface, 1, length(interface))
+        device=""
+    }
+    /option device/ {
+        gsub(/option device[ \t]*['\''"]|['\''"].*$/, "")
+        device=$0
+    }
+    END {
+        if (interface && device) print "  " interface " -> " device
+    }
+    ' $NETWORK_CONFIG 2>/dev/null
+    echo
+}
+
+validate_interfaces_safe() {
+    local iface1=$1
+    local iface2=$2
+    
+    print_step "Validating interface selection..."
+    
+    # Basic validation
+    if [ -z "$iface1" ] || [ -z "$iface2" ]; then
+        print_error "Both interfaces must be specified"
+        return 1
+    fi
+    
+    if [ "$iface1" = "$iface2" ]; then
+        print_error "WAN1 and WAN2 cannot be the same interface"
+        return 1
+    fi
+    
+    # Check interface existence
+    if ! ip link show dev "$iface1" >/dev/null 2>&1; then
+        print_error "Interface $iface1 does not exist"
+        return 1
+    fi
+    
+    if ! ip link show dev "$iface2" >/dev/null 2>&1; then
+        print_error "Interface $iface2 does not exist"
+        return 1
+    fi
+    
+    # Check for conflicts
+    if ! check_interface_conflicts "$iface1" "$iface2"; then
+        echo
+        read -p "Force continue despite conflicts? (y/N): " -n 1 -r
+        echo
+        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+            return 1
+        else
+            print_warning "Continuing despite conflicts..."
+        fi
+    fi
+    
+    return 0
+}
+
+# Configuration lock to prevent multiple simultaneous runs
+acquire_lock() {
+    if [ -f $CONFIG_LOCKFILE ]; then
+        local pid=$(cat $CONFIG_LOCKFILE 2>/dev/null)
+        if kill -0 $pid 2>/dev/null; then
+            print_error "E2FACE is already running (PID: $pid)"
+            print_error "If this is an error, remove: $CONFIG_LOCKFILE"
+            exit 1
+        else
+            # Stale lock file
+            rm -f $CONFIG_LOCKFILE
+        fi
+    fi
+    
+    echo $$ > $CONFIG_LOCKFILE
+    trap 'rm -f $CONFIG_LOCKFILE' EXIT
+}
+
+# Animation functions
+show_spinner() {
+    local pid=$1
+    local text=$2
+    local delay=0.1
+    local i=0
+    
+    while kill -0 $pid 2>/dev/null; do
+        printf "\r${CYAN}[%s]${NC} %s" "${SPINNER[$i]}" "$text"
+        i=$(( (i+1) % 4 ))
+        sleep $delay
+    done
+    printf "\r${GREEN}[✓]${NC} %s\n" "$text"
+}
+
+show_progress_dots() {
+    local text=$1
+    local duration=${2:-3}
+    local delay=0.5
+    local cycles=$((duration * 2))
+    
+    for i in $(seq 1 $cycles); do
+        local dots_index=$(( (i-1) % 4 ))
+        printf "\r${BLUE}[%s]${NC} %s" "${DOTS[$dots_index]}" "$text"
+        sleep $delay
+    done
+    printf "\r${GREEN}[DONE]${NC} %s\n" "$text"
+}
+
+show_loading_bar() {
+    local text=$1
+    local width=50
+    local duration=${2:-3}
+    local increment=$((100 / width))
+    local current=0
+    
+    printf "\r${BLUE}[LOADING]${NC} %s\n" "$text"
+    
+    for i in $(seq 1 $width); do
+        current=$((increment * i))
+        bar="["
+        for j in $(seq 1 $width); do
+            if [ $j -le $i ]; then
+                bar="${bar}="
+            else
+                bar="${bar} "
+            fi
+        done
+        bar="${bar}] ${current}%"
+        printf "\r${CYAN}%s${NC}" "$bar"
+        sleep $(echo "scale=3; $duration/$width" | bc -l 2>/dev/null || echo "0.06")
+    done
+    printf "\n"
+}
+
+typewriter_effect() {
+    local text=$1
+    local delay=0.02
+    
+    echo -n "${CYAN}"
+    for (( i=0; i<${#text}; i++ )); do
+        echo -n "${text:$i:1}"
+        sleep $delay
+    done
+    echo -e "${NC}"
+}
+
+# Clear screen function
+clear_screen() {
+    clear
+}
+
+# Display header
+show_header() {
+    clear_screen
+    echo "================================================================"
+    typewriter_effect "                  E2FACE - DUAL WAN"
+    typewriter_effect "            Easy 2-Face Load Balancer"
+    echo "                 Version: $VERSION"
+    echo "================================================================"
+    echo
+}
+
+# Check root access
+check_root() {
+    if [[ $EUID -ne 0 ]]; then
+        print_error "Script must be run as root!"
+        echo "Please run: sudo $0"
+        exit 1
+    fi
+}
+
+# Check internet connectivity
+check_internet() {
+    print_step "Checking internet connection..."
+    if ping -c 1 -W 3 8.8.8.8 >/dev/null 2>&1; then
+        print_status "Internet connection: OK"
+        return 0
+    else
+        print_error "No internet connection!"
+        return 1
+    fi
+}
+
+# Update script from GitHub
+update_script() {
+    print_header "UPDATING E2FACE"
+    
+    if ! check_internet; then
+        print_error "Cannot update without internet connection"
+        return 1
+    fi
+    
+    print_step "Checking for updates..."
+    
+    # Get latest version from GitHub
+    local latest_version=$(curl -s "${GITHUB_RAW}/e2face" | grep "VERSION=" | head -1 | cut -d'"' -f2)
+    
+    if [ -z "$latest_version" ]; then
+        print_error "Failed to check for updates"
+        return 1
+    fi
+    
+    if [ "$latest_version" = "$VERSION" ]; then
+        print_status "You have the latest version: $VERSION"
+        return 0
+    fi
+    
+    print_status "New version available: $latest_version"
+    echo "Current version: $VERSION"
+    echo
+    
+    read -p "Do you want to update? (y/N): " -n 1 -r
+    echo
+    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+        print_status "Update cancelled"
+        return 0
+    fi
+    
+    print_step "Downloading update..."
+    
+    # Download updated script
+    if curl -s -o "/tmp/e2face_new" "${GITHUB_RAW}/e2face"; then
+        # Verify the downloaded script
+        if grep -q "E2FACE" "/tmp/e2face_new" 2>/dev/null; then
+            # Backup current script
+            cp "$INSTALL_PATH" "${INSTALL_PATH}.backup.$(date +%Y%m%d_%H%M%S)"
+            
+            # Install new version
+            mv "/tmp/e2face_new" "$INSTALL_PATH"
+            chmod +x "$INSTALL_PATH"
+            
+            print_status "Successfully updated to version $latest_version"
+            echo
+            print_status "Please run 'e2face' again to use the new version"
+            exit 0
+        else
+            print_error "Downloaded file is not valid"
+            rm -f "/tmp/e2face_new"
+            return 1
+        fi
+    else
+        print_error "Failed to download update"
+        return 1
+    fi
+}
+
+# Detect available interfaces with animation
+detect_interfaces() {
+    print_step "Detecting network interfaces"
+    
+    (sleep 2) &
+    show_spinner $! "Scanning system for network interfaces"
+    
+    DETECTED_INTERFACES=()
+    
+    # Using ip command
+    if command -v ip >/dev/null 2>&1; then
+        local interfaces=$(ip link show 2>/dev/null | grep -E "^[0-9]+:" | grep -v "lo:" | \
+                          grep -v "br-" | awk -F: '{print $2}' | sed 's/ //g')
+        for iface in $interfaces; do
+            DETECTED_INTERFACES+=("$iface")
+        done
+    fi
+    
+    # Filter out virtual interfaces
+    local physical_interfaces=()
+    for iface in "${DETECTED_INTERFACES[@]}"; do
+        case $iface in
+            lo|br-*|docker*|veth*|gre*|tun*|tap*|l2tp*|ppp*|wg*)
+                continue
+                ;;
+            *)
+                physical_interfaces+=("$iface")
+                ;;
+        esac
+    done
+    
+    DETECTED_INTERFACES=("${physical_interfaces[@]}")
+    
+    if [ ${#DETECTED_INTERFACES[@]} -eq 0 ]; then
+        print_error "No physical interfaces detected!"
+        return 1
+    fi
+    
+    print_status "Found ${#DETECTED_INTERFACES[@]} interfaces: ${DETECTED_INTERFACES[*]}"
+    return 0
+}
+
+# Show interface information
+show_interface_info() {
+    print_header "NETWORK INTERFACES INFORMATION"
+    echo
+    printf "${CYAN}%-12s %-10s %-18s %s${NC}\n" "INTERFACE" "STATUS" "IP ADDRESS" "INTERNET"
+    echo "------------------------------------------------------------"
+    
+    for iface in "${DETECTED_INTERFACES[@]}"; do
+        local status="DOWN"
+        local ip_address="No IP"
+        local internet="No"
+        
+        if ip link show dev $iface 2>/dev/null | grep -q "state UP"; then
+            status="UP"
+            
+            local ip=$(ip addr show dev $iface 2>/dev/null | grep "inet " | awk '{print $2}' | head -1)
+            if [ -n "$ip" ]; then
+                ip_address="$ip"
+            fi
+            
+            if ping -c 1 -I $iface 8.8.8.8 >/dev/null 2>&1; then
+                internet="Yes"
+            fi
+        fi
+        
+        printf "%-12s %-10s %-18s %s\n" "$iface" "$status" "$ip_address" "$internet"
+    done
+    echo
+}
+
+# Show current status
+show_current_status() {
+    print_header "CURRENT SYSTEM STATUS"
+    
+    show_progress_dots "Checking system status" 2
+    
+    echo
+    print_step "E2FACE Version: $VERSION"
+    echo
+    
+    print_step "Load Balancing Status:"
+    if opkg list-installed | grep -q "^mwan3"; then
+        mwan3 status
+    else
+        print_warning "mwan3 is not installed"
+    fi
+    
+    echo
+    print_step "Network Interfaces:"
+    ip -o link show | grep -v "lo:" | awk -F': ' '{print "  " $2}'
+    
+    echo
+    read -p "Press Enter to continue..."
+}
+
+# Manual interface selection
+select_interfaces_manual() {
+    print_header "MANUAL INTERFACE SELECTION"
+    
+    echo "Available interfaces:"
+    for i in "${!DETECTED_INTERFACES[@]}"; do
+        echo "  $((i+1))) ${DETECTED_INTERFACES[$i]}"
+    done
+    echo
+    
+    # Select WAN1
+    while true; do
+        read -p "Select first WAN interface (number or name): " selection
+        if [[ "$selection" =~ ^[0-9]+$ ]] && [ "$selection" -ge 1 ] && [ "$selection" -le ${#DETECTED_INTERFACES[@]} ]; then
+            WAN1=${DETECTED_INTERFACES[$((selection-1))]}
+            break
+        elif [[ " ${DETECTED_INTERFACES[@]} " =~ " ${selection} " ]]; then
+            WAN1=$selection
+            break
+        else
+            print_error "Invalid selection. Please try again."
+        fi
+    done
+    
+    # Select WAN2
+    while true; do
+        read -p "Select second WAN interface (number or name): " selection
+        if [[ "$selection" =~ ^[0-9]+$ ]] && [ "$selection" -ge 1 ] && [ "$selection" -le ${#DETECTED_INTERFACES[@]} ]; then
+            WAN2=${DETECTED_INTERFACES[$((selection-1))]}
+        elif [[ " ${DETECTED_INTERFACES[@]} " =~ " ${selection} " ]]; then
+            WAN2=$selection
+        else
+            print_error "Invalid selection. Please try again."
+            continue
+        fi
+        
+        if [ "$WAN2" = "$WAN1" ]; then
+            print_error "WAN2 must be different from WAN1!"
+        else
+            break
+        fi
+    done
+    
+    echo
+    print_status "Selected interfaces:"
+    echo "  WAN1: $WAN1"
+    echo "  WAN2: $WAN2"
+    echo
+}
+
+# Auto interface selection
+select_interfaces_auto() {
+    print_step "Automatically selecting interfaces"
+    
+    show_loading_bar "Analyzing interface capabilities" 2
+    
+    local interfaces_with_internet=()
+    local interfaces_with_ip=()
+    local interfaces_other=()
+    
+    for iface in "${DETECTED_INTERFACES[@]}"; do
+        if ping -c 1 -I $iface 8.8.8.8 >/dev/null 2>&1; then
+            interfaces_with_internet+=("$iface")
+        elif ip addr show dev $iface 2>/dev/null | grep -q "inet "; then
+            interfaces_with_ip+=("$iface")
+        else
+            interfaces_other+=("$iface")
+        fi
+    done
+    
+    # Selection logic
+    if [ ${#interfaces_with_internet[@]} -ge 2 ]; then
+        WAN1=${interfaces_with_internet[0]}
+        WAN2=${interfaces_with_internet[1]}
+        print_status "Selected two interfaces with internet connectivity"
+    elif [ ${#interfaces_with_internet[@]} -eq 1 ] && [ ${#interfaces_with_ip[@]} -ge 1 ]; then
+        WAN1=${interfaces_with_internet[0]}
+        WAN2=${interfaces_with_ip[0]}
+        print_status "Selected one with internet + one with IP"
+    elif [ ${#interfaces_with_ip[@]} -ge 2 ]; then
+        WAN1=${interfaces_with_ip[0]}
+        WAN2=${interfaces_with_ip[1]}
+        print_status "Selected two interfaces with IP addresses"
+    elif [ ${#DETECTED_INTERFACES[@]} -ge 2 ]; then
+        WAN1=${DETECTED_INTERFACES[0]}
+        WAN2=${DETECTED_INTERFACES[1]}
+        print_status "Selected first two available interfaces"
+    else
+        print_error "Not enough interfaces for load balancing!"
+        return 1
+    fi
+    
+    echo
+    print_status "Auto-selected interfaces:"
+    echo "  WAN1: $WAN1"
+    echo "  WAN2: $WAN2"
+    echo
+    
+    return 0
+}
+
+# Install required packages
+install_packages() {
+    print_header "PACKAGE INSTALLATION"
+    
+    if opkg list-installed | grep -q "^mwan3"; then
+        print_status "mwan3 is already installed"
+        return 0
+    fi
+    
+    print_step "Installing mwan3 package"
+    
+    (opkg update > /dev/null 2>&1) &
+    show_spinner $! "Updating package lists"
+    
+    (opkg install mwan3 > /dev/null 2>&1) &
+    show_spinner $! "Installing mwan3 package"
+    
+    if opkg list-installed | grep -q "^mwan3"; then
+        print_status "mwan3 installed successfully"
+        return 0
+    else
+        print_error "Failed to install mwan3"
+        return 1
+    fi
+}
+
+# Configure dual WAN
+configure_dual_wan() {
+    print_header "SYSTEM CONFIGURATION"
+    
+    # Check for existing E2FACE config first
+    if ! check_existing_e2face_config; then
+        return 1
+    fi
+    
+    # Validate interfaces
+    if ! validate_interfaces_safe "$WAN1" "$WAN2"; then
+        return 1
+    fi
+    
+    # Backup configurations
+    print_step "Creating backups"
+    show_progress_dots "Backing up current configurations" 1
+    
+    local timestamp=$(date +%Y%m%d_%H%M%S)
+    mkdir -p $BACKUP_PATH
+    cp $NETWORK_CONFIG $BACKUP_PATH/network.backup.$timestamp
+    cp $FIREWALL_CONFIG $BACKUP_PATH/firewall.backup.$timestamp
+    print_status "Backups created in: $BACKUP_PATH"
+    
+    # Configure network - ONLY add wan1/wan2, don't touch existing interfaces
+    print_step "Configuring network interfaces"
+    show_loading_bar "Setting up WAN interfaces" 2
+    
+    # Add new configurations (safe append)
+    cat >> $NETWORK_CONFIG <<EOF
+
+config interface 'wan1'
+    option proto 'dhcp'
+    option device '$WAN1'
+    option metric '10'
+
+config interface 'wan2'
+    option proto 'dhcp'
+    option device '$WAN2'
+    option metric '20'
+EOF
+    
+    # Configure firewall - safely modify only the wan zone
+    print_step "Configuring firewall"
+    show_progress_dots "Setting up firewall rules" 1
+    
+    # Remove existing wan zone if it contains wan1/wan2 (E2FACE specific)
+    if grep -q "list network.*wan1" $FIREWALL_CONFIG 2>/dev/null || \
+       grep -q "list network.*wan2" $FIREWALL_CONFIG 2>/dev/null; then
+        # Safe removal of E2FACE wan zone only
+        awk '
+        /config zone.*name.*wan/ { in_wan_zone=1; print; next }
+        in_wan_zone && /list network.*wan[12]/ { next }
+        in_wan_zone && /^[[:space:]]*$/ && !found_empty { found_empty=1; next }
+        in_wan_zone && /^config/ { in_wan_zone=0 }
+        { print }
+        ' $FIREWALL_CONFIG > $FIREWALL_CONFIG.tmp && mv $FIREWALL_CONFIG.tmp $FIREWALL_CONFIG
+    fi
+    
+    # Add or update wan zone with both interfaces
+    if ! grep -q "config zone.*name.*wan" $FIREWALL_CONFIG 2>/dev/null; then
+        # Create new wan zone
+        cat >> $FIREWALL_CONFIG <<EOF
+
+config zone
+    option name 'wan'
+    list network 'wan1'
+    list network 'wan2'
+    option input 'REJECT'
+    option output 'ACCEPT'
+    option forward 'REJECT'
+    option masq '1'
+    option mtu_fix '1'
+EOF
+    else
+        # Update existing wan zone - safely add wan1/wan2
+        awk -v wan1_added=0 -v wan2_added=0 '
+        /config zone.*name.*wan/ { 
+            in_wan_zone=1
+            print
+            next
+        }
+        in_wan_zone && /list network/ {
+            # Print existing network lists
+            print
+            # Check if we need to add wan1/wan2
+            if ($0 ~ /list network.*wan1/) { wan1_added=1 }
+            if ($0 ~ /list network.*wan2/) { wan2_added=1 }
+            next
+        }
+        in_wan_zone && /^[[:space:]]*$/ {
+            # At empty line in wan zone, add missing wan1/wan2
+            if (!wan1_added) {
+                print "    list network '\''wan1'\''"
+                wan1_added=1
+            }
+            if (!wan2_added) {
+                print "    list network '\''wan2'\''"
+                wan2_added=1
+            }
+            print
+            next
+        }
+        in_wan_zone && /^config/ {
+            # End of wan zone, add missing wan1/wan2 before leaving
+            if (!wan1_added) {
+                print "    list network '\''wan1'\''"
+                wan1_added=1
+            }
+            if (!wan2_added) {
+                print "    list network '\''wan2'\''"
+                wan2_added=1
+            }
+            in_wan_zone=0
+            print
+            next
+        }
+        { print }
+        END {
+            # If still in wan zone at end of file
+            if (in_wan_zone) {
+                if (!wan1_added) {
+                    print "    list network '\''wan1'\''"
+                }
+                if (!wan2_added) {
+                    print "    list network '\''wan2'\''"
+                }
+            }
+        }
+        ' $FIREWALL_CONFIG > $FIREWALL_CONFIG.tmp && mv $FIREWALL_CONFIG.tmp $FIREWALL_CONFIG
+    fi
+    
+    # Configure mwan3 (this is E2FACE specific, safe to overwrite)
+    print_step "Configuring load balancing"
+    show_loading_bar "Setting up load balancing rules" 2
+    
+    cat > $MWAN3_CONFIG <<EOF
+config globals 'globals'
+    option mmx_mask '0x3F00'
+
+config interface 'wan1'
+    option enabled '1'
+    option family 'ipv4'
+    option track_method 'ping'
+    list track_ip '8.8.8.8'
+    list track_ip '1.1.1.1'
+    option reliability '2'
+    option count '1'
+    option timeout '2'
+    option interval '5'
+    option down '3'
+    option up '3'
+
+config interface 'wan2'
+    option enabled '1'
+    option family 'ipv4'
+    option track_method 'ping'
+    list track_ip '8.8.8.8'
+    list track_ip '1.1.1.1'
+    option reliability '2'
+    option count '1'
+    option timeout '2'
+    option interval '5'
+    option down '3'
+    option up '3'
+
+config member 'wan1_member'
+    option interface 'wan1'
+    option metric '1'
+    option weight '1'
+
+config member 'wan2_member'
+    option interface 'wan2'
+    option metric '1'
+    option weight '1'
+
+config policy 'balanced_policy'
+    list use_member 'wan1_member'
+    list use_member 'wan2_member'
+
+config rule 'default_rule'
+    option use_policy 'balanced_policy'
+    option dest_ip '0.0.0.0/0'
+EOF
+    
+    # Restart services
+    print_step "Restarting services"
+    
+    (/etc/init.d/network restart > /dev/null 2>&1) &
+    show_spinner $! "Restarting network service"
+    
+    (/etc/init.d/firewall restart > /dev/null 2>&1) &
+    show_spinner $! "Restarting firewall service"
+    
+    # Enable and start mwan3
+    (/etc/init.d/mwan3 enable > /dev/null 2>&1) &
+    show_spinner $! "Enabling mwan3 service"
+    
+    (/etc/init.d/mwan3 restart > /dev/null 2>&1) &
+    show_spinner $! "Starting mwan3 service"
+    
+    print_status "Dual WAN configuration completed successfully"
+    return 0
+}
+
+# Test configuration
+test_configuration() {
+    print_header "CONFIGURATION TESTING"
+    
+    show_loading_bar "Running comprehensive tests" 2
+    
+    echo
+    print_step "Service Status Test:"
+    if /etc/init.d/mwan3 status >/dev/null 2>&1; then
+        print_status "mwan3 service: RUNNING"
+    else
+        print_error "mwan3 service: NOT RUNNING"
+    fi
+    
+    echo
+    print_step "Interface Connectivity Test:"
+    for iface in $WAN1 $WAN2; do
+        echo -n "  $iface: "
+        if ip link show dev $iface | grep -q "state UP"; then
+            echo -n "UP - "
+            if ping -c 2 -I $iface 8.8.8.8 >/dev/null 2>&1; then
+                print_status "Internet OK"
+            else
+                print_warning "No Internet"
+            fi
+        else
+            print_error "DOWN"
+        fi
+    done
+    
+    echo
+    print_step "Load Balancing Status:"
+    mwan3 status
+    
+    echo
+    read -p "Press Enter to continue..."
+}
+
+# Create rollback script
+create_rollback_script() {
+    print_step "Creating rollback script"
+    show_progress_dots "Setting up safety measures" 1
+    
+    cat > /root/rollback_dualwan.sh << 'EOF'
+#!/bin/bash
+echo "================================================================"
+echo "               E2FACE ROLLBACK SCRIPT"
+echo "================================================================"
+echo
+
+BACKUP_DIR="/root/backup_configs"
+latest_network_backup=$(ls -t $BACKUP_DIR/network.backup.* 2>/dev/null | head -1)
+latest_firewall_backup=$(ls -t $BACKUP_DIR/firewall.backup.* 2>/dev/null | head -1)
+
+if [ -z "$latest_network_backup" ] || [ -z "$latest_firewall_backup" ]; then
+    echo "ERROR: No backup files found in $BACKUP_DIR!"
+    exit 1
+fi
+
+echo "Found backups:"
+echo "  Network: $latest_network_backup"
+echo "  Firewall: $latest_firewall_backup"
+echo
+
+read -p "Are you sure you want to rollback? (y/N): " -n 1 -r
+echo
+if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+    echo "Rollback cancelled."
+    exit 0
+fi
+
+echo "Restoring configurations..."
+cp $latest_network_backup /etc/config/network
+cp $latest_firewall_backup /etc/config/firewall
+
+echo "Restarting services..."
+/etc/init.d/mwan3 disable
+/etc/init.d/mwan3 stop
+/etc/init.d/network restart
+/etc/init.d/firewall restart
+
+echo "Rollback completed successfully!"
+echo "Dual WAN load balancing has been disabled."
+EOF
+
+    chmod +x /root/rollback_dualwan.sh
+    print_status "Rollback script created: /root/rollback_dualwan.sh"
+}
+
+# Show main menu
+show_main_menu() {
+    while true; do
+        show_header
+        echo "MAIN MENU:"
+        echo
+        echo "  1) Show Current Status"
+        echo "  2) Auto Setup Dual WAN"
+        echo "  3) Manual Setup Dual WAN"
+        echo "  4) Test Configuration"
+        echo "  5) Show Interface Info"
+        echo "  6) Check for Updates"
+        echo "  7) Exit"
+        echo
+        
+        read -p "Enter your choice [1-7]: " choice
+        
+        case $choice in
+            1)
+                show_current_status
+                ;;
+            2)
+                if detect_interfaces; then
+                    if select_interfaces_auto; then
+                        if install_packages; then
+                            if configure_dual_wan; then
+                                test_configuration
+                                create_rollback_script
+                            fi
+                        fi
+                    fi
+                fi
+                read -p "Press Enter to continue..."
+                ;;
+            3)
+                if detect_interfaces; then
+                    select_interfaces_manual
+                    if install_packages; then
+                        if configure_dual_wan; then
+                            test_configuration
+                            create_rollback_script
+                        fi
+                    fi
+                fi
+                read -p "Press Enter to continue..."
+                ;;
+            4)
+                test_configuration
+                ;;
+            5)
+                if detect_interfaces; then
+                    show_interface_info
+                    read -p "Press Enter to continue..."
+                fi
+                ;;
+            6)
+                update_script
+                read -p "Press Enter to continue..."
+                ;;
+            7)
+                echo
+                print_status "Thank you for using E2FACE - Easy 2-Face Load Balancer"
+                echo
+                exit 0
+                ;;
+            *)
+                print_error "Invalid option! Please try again."
+                sleep 2
+                ;;
+        esac
+    done
+}
+
+# Quick setup function
+quick_setup() {
+    show_header "QUICK SETUP INITIATED"
+    
+    print_step "Starting quick dual WAN setup"
+    
+    if ! detect_interfaces; then
+        print_error "No interfaces detected!"
+        exit 1
+    fi
+    
+    if ! select_interfaces_auto; then
+        print_error "Interface selection failed!"
+        exit 1
+    fi
+    
+    if ! install_packages; then
+        print_error "Package installation failed!"
+        exit 1
+    fi
+    
+    if ! configure_dual_wan; then
+        print_error "Configuration failed!"
+        exit 1
+    fi
+    
+    test_configuration
+    create_rollback_script
+    
+    echo
+    print_status "Quick setup completed successfully"
+    echo
+}
+
+# Show help
+show_help() {
+    show_header
+    echo "E2FACE - Easy 2-Face Dual WAN Load Balancer"
+    echo "Version: $VERSION"
+    echo "GitHub: $GITHUB_REPO"
+    echo
+    echo "Usage:"
+    echo "  e2face                    # Interactive menu"
+    echo "  e2face --auto             # Auto setup"
+    echo "  e2face --manual           # Manual setup"
+    echo "  e2face --status           # Show status"
+    echo "  e2face --test             # Test configuration"
+    echo "  e2face --interfaces       # Show interface info"
+    echo "  e2face --update           # Check for updates"
+    echo "  e2face --help             # Show this help"
+    echo
+    echo "Examples:"
+    echo "  e2face --auto             # Auto detect and setup"
+    echo "  e2face eth0.2 eth0.3      # Setup with specific interfaces"
+    echo "  e2face --update           # Update to latest version"
+    echo
+}
+
+# Main execution
+main() {
+    # Acquire configuration lock
+    acquire_lock
+    check_root
+    
+    # Show help if requested
+    if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
+        show_help
+        exit 0
+    fi
+    
+    # Check for updates
+    if [ "$1" = "--update" ]; then
+        update_script
+        exit 0
+    fi
+    
+    # If arguments provided, do quick setup
+    if [ $# -ge 2 ]; then
+        WAN1=$1
+        WAN2=$2
+        if validate_interfaces_safe "$WAN1" "$WAN2"; then
+            quick_setup
+        else
+            print_error "Interface validation failed"
+            exit 1
+        fi
+    elif [ $# -eq 1 ]; then
+        case $1 in
+            --status)
+                show_current_status
+                exit 0
+                ;;
+            --test)
+                test_configuration
+                exit 0
+                ;;
+            --interfaces)
+                detect_interfaces
+                show_interface_info
+                exit 0
+                ;;
+            --auto)
+                if detect_interfaces; then
+                    if select_interfaces_auto; then
+                        if install_packages; then
+                            if configure_dual_wan; then
+                                test_configuration
+                                create_rollback_script
+                            fi
+                        fi
+                    fi
+                fi
+                ;;
+            --manual)
+                if detect_interfaces; then
+                    select_interfaces_manual
+                    if install_packages; then
+                        if configure_dual_wan; then
+                            test_configuration
+                            create_rollback_script
+                        fi
+                    fi
+                fi
+                ;;
+            *)
+                print_error "Unknown argument: $1"
+                show_help
+                exit 1
+                ;;
+        esac
+    else
+        show_main_menu
+    fi
+}
+
+# Run main function
+main "$@"
