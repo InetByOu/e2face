@@ -257,7 +257,7 @@ Lihat file [`LICENSE`](LICENSE) untuk informasi lengkap.
 
 ## 👥 Pengembang
 
-- **Ou** — *Founder & Developer* (InetByOu)  
+- **Edoll** — *Founder & Developer* (InetByOu)  
 
 ### 🙏 Ucapan Terima Kasih
 - Komunitas **OpenWRT**  
